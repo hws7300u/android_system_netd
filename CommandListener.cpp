@@ -24,7 +24,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <string.h>
-#include <fcntl.h>
 #include <linux/if.h>
 
 #define LOG_TAG "CommandListener"
@@ -35,7 +34,6 @@
 
 #include "CommandListener.h"
 #include "ResponseCode.h"
-#include "ThrottleController.h"
 #include "BandwidthController.h"
 #include "IdletimerController.h"
 #include "SecondaryTableController.h"
@@ -53,6 +51,7 @@ InterfaceController *CommandListener::sInterfaceCtrl = NULL;
 ResolverController *CommandListener::sResolverCtrl = NULL;
 SecondaryTableController *CommandListener::sSecondaryTableCtrl = NULL;
 FirewallController *CommandListener::sFirewallCtrl = NULL;
+ClatdController *CommandListener::sClatdCtrl = NULL;
 
 /**
  * List of module chains to be created, along with explicit ordering. ORDERING
@@ -136,6 +135,7 @@ CommandListener::CommandListener() :
     registerCmd(new IdletimerControlCmd());
     registerCmd(new ResolverCmd());
     registerCmd(new FirewallCmd());
+    registerCmd(new ClatdCmd());
 
     if (!sSecondaryTableCtrl)
         sSecondaryTableCtrl = new SecondaryTableController();
@@ -157,6 +157,8 @@ CommandListener::CommandListener() :
         sFirewallCtrl = new FirewallController();
     if (!sInterfaceCtrl)
         sInterfaceCtrl = new InterfaceController();
+    if (!sClatdCtrl)
+        sClatdCtrl = new ClatdController();
 
     /*
      * This is the only time we touch top-level chains in iptables; controllers
@@ -242,79 +244,6 @@ int CommandListener::InterfaceCmd::runCommand(SocketClient *cli,
         }
         closedir(d);
         cli->sendMsg(ResponseCode::CommandOkay, "Interface list completed", false);
-        return 0;
-    } else if (!strcmp(argv[1], "readrxcounter")) {
-        if (argc != 3) {
-            cli->sendMsg(ResponseCode::CommandSyntaxError,
-                    "Usage: interface readrxcounter <interface>", false);
-            return 0;
-        }
-        unsigned long rx = 0, tx = 0;
-        if (readInterfaceCounters(argv[2], &rx, &tx)) {
-            cli->sendMsg(ResponseCode::OperationFailed, "Failed to read counters", true);
-            return 0;
-        }
-
-        char *msg;
-        asprintf(&msg, "%lu", rx);
-        cli->sendMsg(ResponseCode::InterfaceRxCounterResult, msg, false);
-        free(msg);
-
-        return 0;
-    } else if (!strcmp(argv[1], "readtxcounter")) {
-        if (argc != 3) {
-            cli->sendMsg(ResponseCode::CommandSyntaxError,
-                    "Usage: interface readtxcounter <interface>", false);
-            return 0;
-        }
-        unsigned long rx = 0, tx = 0;
-        if (readInterfaceCounters(argv[2], &rx, &tx)) {
-            cli->sendMsg(ResponseCode::OperationFailed, "Failed to read counters", true);
-            return 0;
-        }
-
-        char *msg = NULL;
-        asprintf(&msg, "%lu", tx);
-        cli->sendMsg(ResponseCode::InterfaceTxCounterResult, msg, false);
-        free(msg);
-        return 0;
-    } else if (!strcmp(argv[1], "getthrottle")) {
-        if (argc != 4 || (argc == 4 && (strcmp(argv[3], "rx") && (strcmp(argv[3], "tx"))))) {
-            cli->sendMsg(ResponseCode::CommandSyntaxError,
-                    "Usage: interface getthrottle <interface> <rx|tx>", false);
-            return 0;
-        }
-        int val = 0;
-        int rc = 0;
-        int voldRc = ResponseCode::InterfaceRxThrottleResult;
-
-        if (!strcmp(argv[3], "rx")) {
-            rc = ThrottleController::getInterfaceRxThrottle(argv[2], &val);
-        } else {
-            rc = ThrottleController::getInterfaceTxThrottle(argv[2], &val);
-            voldRc = ResponseCode::InterfaceTxThrottleResult;
-        }
-        if (rc) {
-            cli->sendMsg(ResponseCode::OperationFailed, "Failed to get throttle", true);
-        } else {
-            char *msg = NULL;
-            asprintf(&msg, "%u", val);
-            cli->sendMsg(voldRc, msg, false);
-            free(msg);
-            return 0;
-        }
-        return 0;
-    } else if (!strcmp(argv[1], "setthrottle")) {
-        if (argc != 5) {
-            cli->sendMsg(ResponseCode::CommandSyntaxError,
-                    "Usage: interface setthrottle <interface> <rx_kbps> <tx_kbps>", false);
-            return 0;
-        }
-        if (ThrottleController::setInterfaceThrottle(argv[2], atoi(argv[3]), atoi(argv[4]))) {
-            cli->sendMsg(ResponseCode::OperationFailed, "Failed to set throttle", true);
-        } else {
-            cli->sendMsg(ResponseCode::CommandOkay, "Interface throttling set", false);
-        }
         return 0;
     } else if (!strcmp(argv[1], "driver")) {
         int rc;
@@ -653,6 +582,21 @@ int CommandListener::TetherCmd::runCommand(SocketClient *cli,
         cli->sendMsg(ResponseCode::TetherStatusResult, tmp, false);
         free(tmp);
         return 0;
+    } else if (argc == 3) {
+        if (!strcmp(argv[1], "interface") && !strcmp(argv[2], "list")) {
+            InterfaceCollection *ilist = sTetherCtrl->getTetheredInterfaceList();
+            InterfaceCollection::iterator it;
+            for (it = ilist->begin(); it != ilist->end(); ++it) {
+                cli->sendMsg(ResponseCode::TetherInterfaceListResult, *it, false);
+            }
+        } else if (!strcmp(argv[1], "dns") && !strcmp(argv[2], "list")) {
+            NetAddressCollection *dlist = sTetherCtrl->getDnsForwarders();
+            NetAddressCollection::iterator it;
+
+            for (it = dlist->begin(); it != dlist->end(); ++it) {
+                cli->sendMsg(ResponseCode::TetherDnsFwdTgtListResult, inet_ntoa(*it), false);
+            }
+        }
     } else {
         /*
          * These commands take a minimum of 4 arguments

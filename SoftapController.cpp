@@ -212,7 +212,6 @@ int SoftapController::startSoftap() {
            ALOGD("Softap startap - Ok");
            usleep(AP_BSS_START_DELAY);
         }
-        return ret;
     }
     return ret;
 
@@ -416,7 +415,7 @@ void SoftapController::generatePsk(char *ssid, char *passphrase, char *psk_str) 
 /*
  * Arguments:
  *	argv[2] - interface name
- *	argv[3] - AP or P2P or STA
+ *	argv[3] - AP or STA
  */
 int SoftapController::fwReloadSoftap(int argc, char *argv[])
 {
@@ -429,7 +428,7 @@ int SoftapController::fwReloadSoftap(int argc, char *argv[])
         return -1;
     }
     if (argc < 4) {
-        ALOGE("SoftAP fwreload is missing arguments. Please use: softap <wlan iface> <AP|P2P|STA>");
+        ALOGE("Softap fwreload - missing arguments");
         return -1;
     }
 
